@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 #include "src/dfs-utils.h"
 #include "proto-src/dfs-service.grpc.pb.h"

@@ -6,6 +6,11 @@
 #include <thread>
 #include <grpcpp/grpcpp.h>
 
+#define FILE_TRANSFER_SUCCESS 200
+#define FILE_TRANSFER_FAILURE 500
+//#define FILE_TRANSFER_SUCCESS 200
+//#define FILE_TRANSFER_SUCCESS 200
+
 class DFSServerNode {
 
 private:
@@ -21,6 +26,7 @@ private:
     /** Server callback **/
     std::function<void()> grader_callback;
 
+
 public:
     DFSServerNode(const std::string& server_address, const std::string& mount_path, std::function<void()> callback);
     ~DFSServerNode();
@@ -34,5 +40,6 @@ public:
     //
 
 };
+
 
 #endif
