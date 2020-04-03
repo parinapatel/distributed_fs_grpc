@@ -43,3 +43,6 @@
 # Project ignores
 mnt/client2
 *result*.json
+
+# Cmake Artifacts
+cmake-build-debug/**
