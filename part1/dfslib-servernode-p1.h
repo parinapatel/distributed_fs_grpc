@@ -6,10 +6,6 @@
 #include <thread>
 #include <grpcpp/grpcpp.h>
 
-#define FILE_TRANSFER_SUCCESS 200
-#define FILE_TRANSFER_FAILURE 500
-//#define FILE_TRANSFER_SUCCESS 200
-//#define FILE_TRANSFER_SUCCESS 200
 
 class DFSServerNode {
 

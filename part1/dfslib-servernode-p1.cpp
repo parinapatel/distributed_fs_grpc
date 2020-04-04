@@ -123,11 +123,12 @@ private:
         }
     }
 
-    struct stat get_file_stats(std::string filepath) {
-        struct stat file_stat;
+    struct stat get_file_stats(std::string filepath, ::dfs_service::file_response *response) {
+        struct stat file_stat{};
         if (stat(filepath.c_str(), &file_stat) == -1) {
             dfs_log(LL_ERROR) << "File Stats Failed for file." << filepath << strerror(errno);
-        }
+            response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
+        } else response->set_file_transfer_status(FILE_TRANSFER_SUCCESS);
         return file_stat;
     }
 
@@ -162,13 +163,13 @@ public:
         if (write_to_file(file_name, reader) == -1) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
             response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
-            return ::grpc::Status(::grpc::StatusCode::INTERNAL, "Write of File Failed.");
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
         }
 
         dfs_log(LL_DEBUG3) << "Successfully Written the File and Getting Stats";
         response->set_file_transfer_status(FILE_TRANSFER_SUCCESS);
 
-        struct stat file_status = get_file_stats(file_name);
+        struct stat file_status = get_file_stats(file_name, response);
         response->set_file_name(file_name);
         response->set_file_stats(&file_status, sizeof(file_status));
 
@@ -192,14 +193,79 @@ public:
 
         if (read_file(file_name, writer) == -1) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
-            return ::grpc::Status(::grpc::StatusCode::INTERNAL, "Read of File Failed.");
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
         }
-
-        struct stat temp_file_stats = get_file_stats(file_name);
+        ::dfs_service::file_response temp;
+        struct stat temp_file_stats = get_file_stats(file_name, &temp);
         file_content.set_file_stats(&temp_file_stats, sizeof(temp_file_stats));
         writer->Write(file_content);
         return ::grpc::Status::OK;
     }
+
+    ::grpc::Status delete_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                               ::dfs_service::file_response *response) override {
+        dfs_log(LL_DEBUG3) << "Start Storing The File.";
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+        ::std::string file_name = WrapPath(request->file_name());
+        response->set_file_name(file_name);
+
+        if (remove(file_name.c_str()) == -1) {
+            response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
+            dfs_log(LL_ERROR) << "File Deletion Failed for File : " << file_name << strerror(errno);
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL, "File Deletion Failed.");
+        } else response->set_file_transfer_status(FILE_TRANSFER_SUCCESS);
+
+        return ::grpc::Status::OK;
+    }
+
+    ::grpc::Status list_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                             ::dfs_service::file_list *response) override {
+        dfs_log(LL_DEBUG3) << "Start Getting List of The File in dir";
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+        DIR *currnt_dir;
+        std::vector<std::string> file_list = {};
+        struct dirent *entry;
+        currnt_dir = opendir(mount_path.c_str());
+        if (currnt_dir == NULL) {
+            dfs_log(LL_ERROR) << "Error in Opening dir: " << mount_path << strerror(errno);
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL,
+                                  "Error in Opening dir: " + mount_path + strerror(errno));
+        }
+        while ((entry = readdir(currnt_dir)) != NULL) {
+            file_list.emplace_back(entry->d_name);
+        }
+        closedir(currnt_dir);
+        return ::grpc::Status::OK;
+
+    }
+
+    ::grpc::Status stat_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                             ::dfs_service::file_response *response) override {
+
+        dfs_log(LL_DEBUG3) << "Start Getting Stats The File.";
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+        std::string file_path = WrapPath(request->file_name());
+        struct stat file_stats{};
+        file_stats = get_file_stats(file_path, response);
+        response->set_file_name(file_path);
+        response->set_file_stats(&file_stats, sizeof(struct stat));
+
+        return ::grpc::Status::OK;
+    }
+
+
 };
 
 //
