@@ -94,6 +94,7 @@ private:
             dfs_log(LL_ERROR) << "File Opening Failed" << filepath;
             return -1;
         }
+        return -1;
     }
 
     int read_file(std::string filepath, ::grpc::ServerWriter<::dfs_service::file_stream> *writer) {
@@ -121,6 +122,7 @@ private:
             dfs_log(LL_ERROR) << "File Opening Failed" << filepath;
             return -1;
         }
+        return -1;
     }
 
     struct stat get_file_stats(std::string filepath, ::dfs_service::file_response *response) {
@@ -191,14 +193,21 @@ public:
         ::dfs_service::file_stream file_content;
         file_content.set_file_name(file_name);
 
-        if (read_file(file_name, writer) == -1) {
-            dfs_log(LL_ERROR) << "Write To file Failed.";
-            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
-        }
         ::dfs_service::file_response temp;
         struct stat temp_file_stats = get_file_stats(file_name, &temp);
-        file_content.set_file_stats(&temp_file_stats, sizeof(temp_file_stats));
-        writer->Write(file_content);
+        if (temp.file_transfer_status() == FILE_TRANSFER_FAILURE) {
+            dfs_log(LL_ERROR) << "Write To file Failed.";
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
+        } else {
+
+            file_content.set_file_stats(&temp_file_stats, sizeof(temp_file_stats));
+            writer->Write(file_content);
+
+            if (read_file(file_name, writer) == -1) {
+                dfs_log(LL_ERROR) << "Write To file Failed.";
+                return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
+            }
+        }
         return ::grpc::Status::OK;
     }
 
@@ -216,14 +225,14 @@ public:
         if (remove(file_name.c_str()) == -1) {
             response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
             dfs_log(LL_ERROR) << "File Deletion Failed for File : " << file_name << strerror(errno);
-            return ::grpc::Status(::grpc::StatusCode::INTERNAL, "File Deletion Failed.");
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "File Deletion Failed.");
         } else response->set_file_transfer_status(FILE_TRANSFER_SUCCESS);
 
         return ::grpc::Status::OK;
     }
 
-    ::grpc::Status list_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
-                             ::dfs_service::file_list *response) override {
+    ::grpc::Status list_file(::grpc::ServerContext *context, const ::dfs_service::empty *request,
+                             ::grpc::ServerWriter<::dfs_service::file_list> *writer) override {
         dfs_log(LL_DEBUG3) << "Start Getting List of The File in dir";
         if (context->IsCancelled()) {
             dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
@@ -231,7 +240,11 @@ public:
                                   "Context is cancelled or Deadline Exceeded or Timeout");
         }
         DIR *currnt_dir;
-        std::vector<std::string> file_list = {};
+//        std::vector<std::pair<std::string,int>> file_list= {};
+        struct file_object {
+            std::string file_path;
+            std::int32_t mtime;
+        } temp_file_object;
         struct dirent *entry;
         currnt_dir = opendir(mount_path.c_str());
         if (currnt_dir == NULL) {
@@ -239,10 +252,23 @@ public:
             return ::grpc::Status(::grpc::StatusCode::INTERNAL,
                                   "Error in Opening dir: " + mount_path + strerror(errno));
         }
+        struct stat temp_stat{};
+        ::dfs_service::file_list fileList;
         while ((entry = readdir(currnt_dir)) != NULL) {
-            file_list.emplace_back(entry->d_name);
+            if (std::strcmp(entry->d_name, ".") != 0 || std::strcmp(entry->d_name, "..") != 0) {
+                stat(WrapPath(entry->d_name).c_str(), &temp_stat);
+                temp_file_object.file_path = entry->d_name;
+                temp_file_object.mtime = temp_stat.st_mtim.tv_sec;
+                fileList.set_files(&temp_file_object, sizeof(struct file_object));
+                writer->Write(fileList);
+            }
         }
         closedir(currnt_dir);
+//        std::pair<std::string,int> file_list_arr[file_list.size()] ;
+//        std::copy(file_list.begin(),file_list.end(),file_list_arr);
+//        response->set_file_list_length(file_list.size());
+//
+//        response->set_file_list(&file_list_arr, sizeof(file_list_arr));
         return ::grpc::Status::OK;
 
     }
@@ -262,6 +288,9 @@ public:
         response->set_file_name(file_path);
         response->set_file_stats(&file_stats, sizeof(struct stat));
 
+        if (response->file_transfer_status() == FILE_TRANSFER_FAILURE) {
+            return ::grpc::Status(StatusCode::NOT_FOUND, "FIle Not found.");
+        }
         return ::grpc::Status::OK;
     }
 

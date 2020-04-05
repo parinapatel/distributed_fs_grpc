@@ -13,7 +13,7 @@ service DFSService {
     // 3. REQUIRED (Parts 1 & 2): A method to delete files from the server
         rpc delete_file(file_request) returns (file_response);
     // 4. REQUIRED (Parts 1 & 2): A method to list all files on the server
-        rpc list_file(empty) returns (file_list);
+        rpc list_file(empty) returns (stream file_list);
         // 5. REQUIRED (Parts 1 & 2): A method to get the status of a file on the server
         rpc stat_file(file_request) returns (file_response);
         // 7. Any other methods you deem necessary to complete the tasks of this assignment
@@ -40,7 +40,7 @@ message file_response{
 };
 
 message file_list{
-        bytes file_list = 1;
+        bytes files = 1;
 }
 
 message empty {
