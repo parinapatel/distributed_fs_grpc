@@ -257,19 +257,26 @@ StatusCode DFSClientNodeP1::List(std::map<std::string,int>* file_map, bool displ
     ::dfs_service::file_list server_response;
     dfs_service::empty client_request;
     struct file_object {
-        std::string file_path;
+        char file_path[256];
         std::int32_t mtime;
     } *temp_file_object;
-
+//    temp_file_object = (struct file_object *) malloc(sizeof(struct file_object));
+//    if (temp_file_object == NULL) {
+//        dfs_log(LL_SYSINFO) << "Malloc Failed....";
+//    }
     std::unique_ptr<ClientReader<::dfs_service::file_list>> request_reader(
             service_stub->list_file(&context, client_request));
 
     while (request_reader->Read(&server_response)) {
         temp_file_object = (file_object *) server_response.files().c_str();
-        file_map->insert(std::pair<std::string, int>(temp_file_object->file_path, temp_file_object->mtime));
-    }
+        dfs_log(LL_DEBUG2) << std::string(temp_file_object->file_path);
 
+        file_map->insert(
+                std::pair<std::string, int>(std::string(temp_file_object->file_path), temp_file_object->mtime));
+    }
+//    free(temp_file_object);
     method_status = request_reader->Finish();
+
 //    dfs_log(LL_DEBUG) << "Method Status : " << method_status;
     if (method_status.ok()) {
         return StatusCode::OK;
@@ -312,9 +319,8 @@ StatusCode DFSClientNodeP1::Stat(const std::string &filename, void* file_status)
 
     ::dfs_service::file_response server_response;
     dfs_service::file_request client_request;
-    std::string file_name = WrapPath(filename);
 
-    client_request.set_file_name(file_name);
+    client_request.set_file_name(filename);
     Status server_status = service_stub->stat_file(&context, client_request, &server_response);
 
     if (server_response.file_transfer_status() == FILE_TRANSFER_FAILURE) {
@@ -322,8 +328,7 @@ StatusCode DFSClientNodeP1::Stat(const std::string &filename, void* file_status)
     }
 
     file_status = (struct stat *) server_response.file_stats().c_str();
-
-//    dfs_log(LL_DEBUG) << "Method Status : " << server_status;
+    dfs_log(LL_DEBUG) << ((struct stat *) server_response.file_stats().c_str())->st_size;
     if (server_status.ok()) {
         return StatusCode::OK;
     } else {

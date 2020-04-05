@@ -242,7 +242,7 @@ public:
         DIR *currnt_dir;
 //        std::vector<std::pair<std::string,int>> file_list= {};
         struct file_object {
-            std::string file_path;
+            char file_path[256];
             std::int32_t mtime;
         } temp_file_object;
         struct dirent *entry;
@@ -255,10 +255,13 @@ public:
         struct stat temp_stat{};
         ::dfs_service::file_list fileList;
         while ((entry = readdir(currnt_dir)) != NULL) {
-            if (std::strcmp(entry->d_name, ".") != 0 || std::strcmp(entry->d_name, "..") != 0) {
+            if (std::strcmp(entry->d_name, ".") != 0 && std::strcmp(entry->d_name, "..") != 0 &&
+                entry->d_name[0] == '.') {
                 stat(WrapPath(entry->d_name).c_str(), &temp_stat);
-                temp_file_object.file_path = entry->d_name;
+                strcpy(temp_file_object.file_path, entry->d_name);
                 temp_file_object.mtime = temp_stat.st_mtim.tv_sec;
+                dfs_log(LL_DEBUG3) << temp_file_object.file_path;
+
                 fileList.set_files(&temp_file_object, sizeof(struct file_object));
                 writer->Write(fileList);
             }
