@@ -80,7 +80,7 @@ private:
         ::dfs_service::file_stream temp;
         if (file_writer.is_open()) {
             while (reader->Read(&temp)) {
-                file_writer << temp.file_data();
+                file_writer.write(temp.file_data().c_str(), temp.file_data().size());
             }
             if (file_writer.bad() || file_writer.fail()) {
                 dfs_log(LL_ERROR) << "File Opening Failed" << filepath;
@@ -99,25 +99,31 @@ private:
 
     int read_file(std::string filepath, ::grpc::ServerWriter<::dfs_service::file_stream> *writer) {
         std::ifstream file_reader;
+        dfs_log(LL_DEBUG3) << "filename: " << filepath;
         file_reader.open(filepath, std::ios::in | std::ios::binary);
         ::dfs_service::file_stream temp;
-        char buffer[BUFSIZ];
+        char buffer[BUFFER_SIZE];
         if (file_reader.is_open()) {
-            while (!file_reader.eof()) {
-                file_reader.read(buffer, BUFSIZ - 1);
-                temp.set_file_data(buffer);
+            while (file_reader.read(buffer, BUFFER_SIZE - 1)) {
+//                dfs_log(LL_DEBUG2) << "BUFFER :  " << buffer;
+                temp.set_file_data(buffer, BUFFER_SIZE - 1);
+                bzero(buffer, BUFFER_SIZE);
                 writer->Write(temp);
                 temp.clear_file_data();
             }
+
+// Flush Last Bites
+            if (file_reader.gcount() > 0) {
+                dfs_log(LL_DEBUG2) << "EOF BUFFER :  " << file_reader.gcount();
+//                dfs_log(LL_DEBUG2) << buffer  ;
+                temp.set_file_data(buffer, file_reader.gcount());
+                writer->Write(temp);
+                temp.clear_file_data();
+            }
+
             temp.clear_file_data();
-            if (file_reader.bad() || file_reader.fail()) {
-                dfs_log(LL_ERROR) << "File Reading Failed" << filepath << strerror(errno);
-                return -1;
-            }
-            if (file_reader.good()) {
-                file_reader.close();
-                return 0;
-            }
+            file_reader.close();
+            return 0;
         } else {
             dfs_log(LL_ERROR) << "File Opening Failed" << filepath;
             return -1;

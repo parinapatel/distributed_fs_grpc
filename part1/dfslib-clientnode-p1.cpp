@@ -83,16 +83,32 @@ StatusCode DFSClientNodeP1::Store(const std::string &filename) {
         std::unique_ptr<ClientWriter<::dfs_service::file_stream>> request_writer(
                 service_stub->store_file(&context, &server_response));
 
-        client_request.set_file_name(file_name);
+        client_request.set_file_name(filename);
         request_writer->Write(client_request);
-        char buffer[BUFSIZ];
-        while (!file_reader.eof()) {
-            file_reader.read(buffer, BUFSIZ - 1);
-            client_request.set_file_data(buffer);
+        char buffer[BUFFER_SIZE];
+
+        while (file_reader.read(buffer, BUFFER_SIZE - 1)) {
+//            dfs_log(LL_DEBUG2) << "BUFFER :  " << buffer;
+            client_request.set_file_data(buffer, BUFFER_SIZE - 1);
+            bzero(buffer, BUFFER_SIZE);
             request_writer->Write(client_request);
             client_request.clear_file_data();
         }
+
+// Flush Last Bites
+        if (file_reader.gcount() > 0) {
+//            dfs_log(LL_DEBUG2) << "EOF BUFFER :  " << file_reader.gcount()  ;
+//            dfs_log(LL_DEBUG2) << buffer  ;
+            client_request.set_file_data(buffer, file_reader.gcount());
+            request_writer
+                    ->Write(client_request);
+            client_request.clear_file_data();
+        }
+
+        client_request.clear_file_data();
         file_reader.close();
+
+
         request_writer->WritesDone();
         method_status = request_writer->Finish();
 //        dfs_log(LL_DEBUG) << "Method Status : " + method_status.error_details();
@@ -146,18 +162,22 @@ StatusCode DFSClientNodeP1::Fetch(const std::string &filename) {
     dfs_service::file_request client_request;
     std::string file_name = WrapPath(filename);
     std::ofstream file_writer;
+    client_request.set_file_name(filename);
     std::unique_ptr<ClientReader<::dfs_service::file_stream>> request_reader(
             service_stub->fetch_file(&context, client_request));
 
     file_writer.open(file_name, std::ios::out | std::ios::binary);
     request_reader->Read(&server_response);
-
+    dfs_log(LL_DEBUG3) << "Response File name" << server_response.file_name().c_str();
     auto *file_stats = (struct stat *) server_response.file_stats().c_str();
     struct timespec modify_time = file_stats->st_mtim;
 
+//    char buffer[BUFFER_SIZE];
     if (file_writer.is_open()) {
         while (request_reader->Read(&server_response)) {
-            file_writer << server_response.file_data();
+            dfs_log(LL_DEBUG3) << "Server Buffer" << server_response.file_data().c_str();
+//            file_writer << server_response.file_data().c_str();
+            file_writer.write(server_response.file_data().c_str(), server_response.file_data().size());
         }
         if (file_writer.bad() || file_writer.fail()) {
             dfs_log(LL_ERROR) << "File Opening Failed" << file_name;
@@ -210,9 +230,8 @@ StatusCode DFSClientNodeP1::Delete(const std::string& filename) {
 
     ::dfs_service::file_response server_response;
     dfs_service::file_request client_request;
-    std::string file_name = WrapPath(filename);
 
-    client_request.set_file_name(file_name);
+    client_request.set_file_name(filename);
     Status server_status = service_stub->delete_file(&context, client_request, &server_response);
 
 
