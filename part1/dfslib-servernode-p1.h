@@ -6,6 +6,7 @@
 #include <thread>
 #include <grpcpp/grpcpp.h>
 
+
 class DFSServerNode {
 
 private:
@@ -21,6 +22,7 @@ private:
     /** Server callback **/
     std::function<void()> grader_callback;
 
+
 public:
     DFSServerNode(const std::string& server_address, const std::string& mount_path, std::function<void()> callback);
     ~DFSServerNode();
@@ -34,5 +36,6 @@ public:
     //
 
 };
+
 
 #endif
