@@ -74,7 +74,7 @@ private:
         return this->mount_path + filepath;
     }
 
-    int write_to_file(std::string filepath, ::grpc::ServerReader<::dfs_service::file_stream> *reader) {
+    static int write_to_file(std::string filepath, ::grpc::ServerReader<::dfs_service::file_stream> *reader) {
         std::ofstream file_writer;
         file_writer.open(filepath, std::ios::out | std::ios::binary);
         ::dfs_service::file_stream temp;
@@ -97,7 +97,7 @@ private:
         return -1;
     }
 
-    int read_file(std::string filepath, ::grpc::ServerWriter<::dfs_service::file_stream> *writer) {
+    static int read_file(std::string filepath, ::grpc::ServerWriter<::dfs_service::file_stream> *writer) {
         std::ifstream file_reader;
         dfs_log(LL_DEBUG3) << "filename: " << filepath;
         file_reader.open(filepath, std::ios::in | std::ios::binary);
@@ -131,7 +131,7 @@ private:
         return -1;
     }
 
-    struct stat get_file_stats(std::string filepath, ::dfs_service::file_response *response) {
+    static struct stat get_file_stats(std::string filepath, ::dfs_service::file_response *response) {
         struct stat file_stat{};
         if (stat(filepath.c_str(), &file_stat) == -1) {
             dfs_log(LL_ERROR) << "File Stats Failed for file." << filepath << strerror(errno);
@@ -250,19 +250,19 @@ public:
         struct file_object {
             char file_path[256];
             std::int32_t mtime;
-        } temp_file_object;
+        } temp_file_object{};
         struct dirent *entry;
         currnt_dir = opendir(mount_path.c_str());
-        if (currnt_dir == NULL) {
+        if (currnt_dir == nullptr) {
             dfs_log(LL_ERROR) << "Error in Opening dir: " << mount_path << strerror(errno);
             return ::grpc::Status(::grpc::StatusCode::INTERNAL,
                                   "Error in Opening dir: " + mount_path + strerror(errno));
         }
         struct stat temp_stat{};
         ::dfs_service::file_list fileList;
-        while ((entry = readdir(currnt_dir)) != NULL) {
+        while ((entry = readdir(currnt_dir)) != nullptr) {
             if (std::strcmp(entry->d_name, ".") != 0 && std::strcmp(entry->d_name, "..") != 0 &&
-                entry->d_name[0] == '.') {
+                entry->d_name[0] != '.') {
                 stat(WrapPath(entry->d_name).c_str(), &temp_stat);
                 strcpy(temp_file_object.file_path, entry->d_name);
                 temp_file_object.mtime = temp_stat.st_mtim.tv_sec;

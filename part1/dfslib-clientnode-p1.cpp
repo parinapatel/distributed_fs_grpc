@@ -288,7 +288,7 @@ StatusCode DFSClientNodeP1::List(std::map<std::string,int>* file_map, bool displ
 
     while (request_reader->Read(&server_response)) {
         temp_file_object = (file_object *) server_response.files().c_str();
-        dfs_log(LL_DEBUG2) << std::string(temp_file_object->file_path);
+        dfs_log(LL_DEBUG2) << " List: " << std::string(temp_file_object->file_path);
 
         file_map->insert(
                 std::pair<std::string, int>(std::string(temp_file_object->file_path), temp_file_object->mtime));
@@ -296,6 +296,7 @@ StatusCode DFSClientNodeP1::List(std::map<std::string,int>* file_map, bool displ
 //    free(temp_file_object);
     method_status = request_reader->Finish();
 
+//    display = true;
 //    dfs_log(LL_DEBUG) << "Method Status : " << method_status;
     if (method_status.ok()) {
         return StatusCode::OK;
