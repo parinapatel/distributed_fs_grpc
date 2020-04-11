@@ -241,8 +241,6 @@ public:
                     this->queued_tags.end(),
                     [](QueueRequest<FileRequestType, FileListResponseType>& queue_request) { return queue_request.finished; }
                 ), this->queued_tags.end());
-                break;
-
             }
         }
     }
@@ -407,6 +405,12 @@ public:
 
         std::string file_path = WrapPath(request->file_name());
         struct stat file_stats{};
+        if (check_for_file_lock(file_path, request->client_id()) == LOCKED) {
+            dfs_log(LL_DEBUG) << "Given file ; " + request->file_name() + " is locked by client : "
+                              << find_lock_client(file_path);
+            return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                  "Given file ; " + request->file_name() + " is locked by another client.");
+        }
         file_stats = get_file_stats(file_path, response);
         response->set_file_name(file_path);
         response->set_file_stats(&file_stats, sizeof(struct stat));
@@ -481,6 +485,8 @@ public:
                 temp_file_object.mtime = temp_stat.st_mtim.tv_sec;
                 temp_file_object.create_time = temp_stat.st_ctim.tv_sec;
                 temp_file_object.file_size = temp_stat.st_size;
+                temp_file_object.file_crc = dfs_file_checksum(temp_file_object.file_path, &this->crc_table);
+
                 dfs_log(LL_DEBUG3) << temp_file_object.file_path;
                 file_storage_list.push_back(temp_file_object);
             }
@@ -507,7 +513,12 @@ public:
 
         ::std::string file_name = WrapPath(request->file_name());
         response->set_file_name(file_name);
-
+        if (check_for_file_lock(file_name, request->client_id()) == LOCKED) {
+            dfs_log(LL_DEBUG) << "Given file ; " + request->file_name() + " is locked by client : "
+                              << find_lock_client(file_name);
+            return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                  "Given file ; " + request->file_name() + " is locked by another client.");
+        }
         if (remove(file_name.c_str()) == -1) {
             response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
             dfs_log(LL_ERROR) << "File Deletion Failed for File : " << file_name << strerror(errno);

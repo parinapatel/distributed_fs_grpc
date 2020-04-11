@@ -71,6 +71,7 @@ struct file_object {
     std::int32_t mtime;
     std::uint64_t file_size;
     std::int32_t create_time;
+    std::uint32_t file_crc;
 };
 
 int write_to_file(std::string filepath, ::grpc::ServerReader<::dfs_service::file_stream> *reader);

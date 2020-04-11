@@ -17,6 +17,7 @@
 #include <sys/inotify.h>
 #include <grpcpp/grpcpp.h>
 #include <utime.h>
+#include <dirent.h>
 
 #include "src/dfs-utils.h"
 #include "src/dfslibx-clientnode-p2.h"
@@ -67,7 +68,28 @@ grpc::StatusCode DFSClientNodeP2::RequestWriteAccess(const std::string &filename
     // StatusCode::CANCELLED otherwise
     //
     //
-    return grpc::StatusCode::UNIMPLEMENTED;
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+
+    ::dfs_service::file_response server_response;
+    dfs_service::file_request client_request;
+
+    client_request.set_file_name(filename);
+    client_request.set_client_id(DFSClientNode::ClientId());
+    Status server_status = service_stub->lock_file(&context, client_request, &server_response);
+
+    if (server_status.ok()) {
+        if (server_response.file_lock() == LOCKED) {
+            return StatusCode::OK;
+        } else return StatusCode::RESOURCE_EXHAUSTED;
+    } else {
+        dfs_log(LL_ERROR) << server_status.error_details();
+        dfs_log(LL_ERROR) << "Error Message :" << server_status.error_message();
+        return server_status.error_code();
+    }
 }
 
 grpc::StatusCode DFSClientNodeP2::Store(const std::string &filename) {
@@ -96,8 +118,66 @@ grpc::StatusCode DFSClientNodeP2::Store(const std::string &filename) {
     // StatusCode::CANCELLED otherwise
     //
     //
-    return grpc::StatusCode::UNIMPLEMENTED;
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+    ::dfs_service::file_response server_response;
+    dfs_service::file_stream client_request;
+    std::string file_path = WrapPath(filename);
 
+    std::uint32_t client_file_crc = dfs_file_checksum(file_path, &this->crc_table);
+
+    client_request.set_file_crc(client_file_crc);
+    client_request.set_client_id(DFSClientNode::ClientId());
+    std::ifstream file_reader;
+    file_reader.open(file_path, std::ios::in | std::ios::binary);
+
+    if (!file_reader.is_open()) {
+        dfs_log(LL_ERROR) << "File Not exist: " << file_path << strerror(errno);
+        return StatusCode::NOT_FOUND;
+    } else {
+        std::unique_ptr<ClientWriter<::dfs_service::file_stream>> request_writer(
+                service_stub->store_file(&context, &server_response));
+
+        client_request.set_file_name(filename);
+        request_writer->Write(client_request);
+        char buffer[BUFFER_SIZE];
+
+        while (file_reader.read(buffer, BUFFER_SIZE - 1)) {
+            client_request.set_file_data(buffer, BUFFER_SIZE - 1);
+            bzero(buffer, BUFFER_SIZE);
+            request_writer->Write(client_request);
+            client_request.clear_file_data();
+        }
+
+// Flush Last Bites
+        if (file_reader.gcount() > 0) {
+            client_request.set_file_data(buffer, file_reader.gcount());
+            request_writer
+                    ->Write(client_request);
+            client_request.clear_file_data();
+        }
+
+        client_request.clear_file_data();
+        file_reader.close();
+
+
+        request_writer->WritesDone();
+        method_status = request_writer->Finish();
+        if (method_status.ok()) {
+            if (server_response.file_transfer_status() == FILE_TRANSFER_SUCCESS) {
+                return StatusCode::OK;
+            } else {
+                return StatusCode::NOT_FOUND;
+            }
+        } else {
+            dfs_log(LL_ERROR) << method_status.error_details();
+            dfs_log(LL_ERROR) << "Error Message :" << method_status.error_message();
+            return method_status.error_code();
+        }
+    }
 }
 
 
@@ -124,7 +204,53 @@ grpc::StatusCode DFSClientNodeP2::Fetch(const std::string &filename) {
     //
     // Hint: You may want to match the mtime on local files to the server's mtime
     //
-    return grpc::StatusCode::UNIMPLEMENTED;
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+    ::dfs_service::file_stream server_response;
+    dfs_service::file_request client_request;
+    std::string file_path = WrapPath(filename);
+    std::ofstream file_writer;
+
+    client_request.set_file_name(filename);
+    client_request.set_client_id(DFSClientNode::ClientId());
+
+    std::unique_ptr<ClientReader<::dfs_service::file_stream>> request_reader(
+            service_stub->fetch_file(&context, client_request));
+
+    request_reader->Read(&server_response);
+    if (check_file_content(file_path, &this->crc_table, server_response.file_crc()) == FILE_EXIST)
+        return ::grpc::StatusCode::ALREADY_EXISTS;
+
+
+    file_writer.open(file_path, std::ios::out | std::ios::binary);
+
+    if (file_writer.is_open()) {
+        while (request_reader->Read(&server_response)) {
+//            file_writer << server_response.file_data().c_str();
+            file_writer.write(server_response.file_data().c_str(), server_response.file_data().size());
+        }
+        if (file_writer.bad() || file_writer.fail()) {
+            dfs_log(LL_ERROR) << "File Opening Failed" << file_path;
+            return StatusCode::CANCELLED;
+        }
+        if (file_writer.good()) {
+            file_writer.close();
+        }
+    } else {
+        dfs_log(LL_ERROR) << "File Opening Failed" << file_path;
+        return StatusCode::CANCELLED;
+    }
+    method_status = request_reader->Finish();
+    if (method_status.ok()) {
+        return StatusCode::OK;
+    } else {
+        dfs_log(LL_ERROR) << method_status.error_details();
+        dfs_log(LL_ERROR) << "Error Message :" << method_status.error_message();
+        return method_status.error_code();
+    }
 
 }
 
@@ -149,7 +275,27 @@ grpc::StatusCode DFSClientNodeP2::Delete(const std::string &filename) {
     // StatusCode::CANCELLED otherwise
     //
     //
-    return grpc::StatusCode::UNIMPLEMENTED;
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+    ::dfs_service::file_response server_response;
+    dfs_service::file_request client_request;
+
+    client_request.set_file_name(filename);
+    client_request.set_client_id(DFSClientNode::ClientId());
+
+    Status server_status = service_stub->delete_file(&context, client_request, &server_response);
+
+
+    if (server_status.ok()) {
+        return StatusCode::OK;
+    } else {
+        dfs_log(LL_ERROR) << server_status.error_details();
+        dfs_log(LL_ERROR) << "Error Message :" << server_status.error_message();
+        return server_status.error_code();
+    }
 
 }
 
@@ -171,7 +317,43 @@ grpc::StatusCode DFSClientNodeP2::List(std::map<std::string,int>* file_map, bool
     // StatusCode::CANCELLED otherwise
     //
     //
-    return grpc::StatusCode::UNIMPLEMENTED;
+
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+
+    ::dfs_service::file_list server_response;
+    dfs_service::empty client_request;
+
+    struct file_object *temp_file_object;
+
+    std::unique_ptr<ClientReader<::dfs_service::file_list>> request_reader(
+            service_stub->list_file(&context, client_request));
+
+    if (display) {
+        dfs_log(LL_SYSINFO) << "File Path \t Modified Time";
+    }
+
+    while (request_reader->Read(&server_response)) {
+        temp_file_object = (file_object *) server_response.files().c_str();
+        dfs_log(LL_DEBUG2) << " List: " << std::string(temp_file_object->file_path);
+        if (display) {
+            dfs_log(LL_SYSINFO) << temp_file_object->file_path << "\t" << temp_file_object->mtime;
+        }
+        file_map->insert(
+                std::pair<std::string, int>(std::string(temp_file_object->file_path), temp_file_object->mtime));
+    }
+    method_status = request_reader->Finish();
+
+    if (method_status.ok()) {
+        return StatusCode::OK;
+    } else {
+        dfs_log(LL_ERROR) << method_status.error_details();
+        dfs_log(LL_ERROR) << "Error Message :" << method_status.error_message();
+        return method_status.error_code();
+    }
 
 }
 
@@ -194,8 +376,35 @@ grpc::StatusCode DFSClientNodeP2::Stat(const std::string &filename, void* file_s
     // StatusCode::CANCELLED otherwise
     //
     //
-    return grpc::StatusCode::UNIMPLEMENTED;
 
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+
+
+    ::dfs_service::file_response server_response;
+    dfs_service::file_request client_request;
+
+    client_request.set_file_name(filename);
+    client_request.set_client_id(DFSClientNode::ClientId());
+
+    Status server_status = service_stub->stat_file(&context, client_request, &server_response);
+
+    if (server_response.file_transfer_status() == FILE_TRANSFER_FAILURE) {
+        return StatusCode::NOT_FOUND;
+    }
+
+    file_status = (struct stat *) server_response.file_stats().c_str();
+    dfs_log(LL_DEBUG) << ((struct stat *) server_response.file_stats().c_str())->st_size;
+    if (server_status.ok()) {
+        return StatusCode::OK;
+    } else {
+        dfs_log(LL_ERROR) << server_status.error_details();
+        dfs_log(LL_ERROR) << "Error Message :" << server_status.error_message();
+        return server_status.error_code();
+    }
 }
 
 void DFSClientNodeP2::InotifyWatcherCallback(std::function<void()> callback) {
@@ -219,7 +428,7 @@ void DFSClientNodeP2::InotifyWatcherCallback(std::function<void()> callback) {
     // the async thread when a file event has been signaled?
     //
 
-
+    std::lock_guard<std::mutex> lock(inotify_mutex);
     callback();
 
 }
@@ -256,6 +465,12 @@ void DFSClientNodeP2::HandleCallbackList() {
     // properly coordinated.
     //
 
+    DIR *current_dir;
+    struct dirent *entry;
+    struct stat file_stat{};
+
+    struct file_object temp_file_object{};
+
     // Block until the next result is available in the completion queue.
     while (completion_queue.Next(&tag, &ok)) {
         {
@@ -264,9 +479,14 @@ void DFSClientNodeP2::HandleCallbackList() {
             //
             // Consider adding a critical section or RAII style lock here
             //
-
+            std::lock_guard<std::mutex> lock(inotify_mutex);
             // The tag is the memory location of the call_data object
             AsyncClientData<FileListResponseType> *call_data = static_cast<AsyncClientData<FileListResponseType> *>(tag);
+            int dir_length = call_data->reply.file_length();
+            struct file_object *file_storage_list;
+
+            std::map<std::string, struct file_object> local_storage;
+            file_storage_list = (file_object *) call_data->reply.files().c_str();
 
             dfs_log(LL_DEBUG2) << "Received completion queue callback";
 
@@ -280,18 +500,46 @@ void DFSClientNodeP2::HandleCallbackList() {
             if (ok && call_data->status.ok()) {
 
                 dfs_log(LL_DEBUG3) << "Handling async callback ";
+                current_dir = opendir(mount_path.c_str());
+                while ((entry = readdir(current_dir)) != nullptr) {
+                    if (std::strcmp(entry->d_name, ".") != 0 && std::strcmp(entry->d_name, "..") != 0 &&
+                        entry->d_name[0] != '.') {
+                        stat(WrapPath(entry->d_name).c_str(), &file_stat);
+                        strcpy(temp_file_object.file_path, entry->d_name);
+                        temp_file_object.mtime = file_stat.st_mtim.tv_sec;
+                        temp_file_object.create_time = file_stat.st_ctim.tv_sec;
+                        temp_file_object.file_size = file_stat.st_size;
+                        dfs_log(LL_DEBUG3) << temp_file_object.file_path;
+                        local_storage[temp_file_object.file_path] = temp_file_object;
 
-                //
-                // STUDENT INSTRUCTION:
-                //
-                // Add your handling of the asynchronous event calls here.
-                // For example, based on the file listing returned from the server,
-                // how should the client respond to this updated information?
-                // Should it retrieve an updated version of the file?
-                // Send an update to the server?
-                // Do nothing?
-                //
+                    }
+                }
+                std::string remote_file_path;
+                for (int i = 0; i < dir_length; i++) {
+                    dfs_log(LL_DEBUG) << "file Name: " << file_storage_list[i].file_path;
+                    remote_file_path = file_storage_list[i].file_path;
+                    if (local_storage.count(remote_file_path) > 0) {
+                        if (file_storage_list[i].file_crc !=
+                            dfs_file_checksum(local_storage[remote_file_path].file_path, &this->crc_table)) {
+                            if (file_storage_list[i].mtime >= local_storage[remote_file_path].mtime) {
+                                this->Fetch(remote_file_path);
+                            } else this->Store(remote_file_path);
+                        }
+                        local_storage.erase(remote_file_path);
+                    } else {
+                        this->Fetch(remote_file_path);
+                    }
+                }
 
+                if (!local_storage.empty()) {
+                    auto it = local_storage.begin();
+                    while (it != local_storage.end()) {
+                        if (remove(it->second.file_path) == -1) {
+                            dfs_log(LL_ERROR) << it->second.file_path << "Deletion Failed";
+                        }
+                        it++;
+                    }
+                }
 
 
             } else {

@@ -15,6 +15,9 @@
 
 class DFSClientNodeP2 : public DFSClientNode {
 
+private:
+    std::mutex inotify_mutex;
+
 public:
 
     //

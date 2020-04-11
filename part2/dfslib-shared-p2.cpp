@@ -11,8 +11,8 @@
 // Note: this may be adjusted from the CLI in
 // both the client and server executables.
 // This shouldn't be changed at the file level.
-dfs_log_level_e DFS_LOG_LEVEL = LL_ERROR;
-
+//dfs_log_level_e DFS_LOG_LEVEL = LL_ERROR;
+dfs_log_level_e DFS_LOG_LEVEL = LL_DEBUG3;
 //
 // STUDENT INSTRUCTION:
 //
