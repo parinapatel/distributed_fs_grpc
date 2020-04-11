@@ -94,3 +94,66 @@ target_link_libraries(dfs-server-p1
         )
 
 target_link_libraries(dfs-server-p1 -static-libasan)
+
+
+add_executable(dfs-client-p2
+        part2/proto-src/dfs-service.grpc.pb.cc
+        part2/proto-src/dfs-service.grpc.pb.h
+        part2/proto-src/dfs-service.pb.cc
+        part2/proto-src/dfs-service.pb.h
+        part2/src/dfs-client-p2.cpp
+        part2/src/dfs-client-p2.h
+        part2/src/dfs-utils.h
+        part2/src/CRC.h
+        part2/src/dfslibx-call-data.h
+        part2/src/dfslibx-clientnode-p2.cpp
+        part2/src/dfslibx-clientnode-p2.h
+        part2/src/dfslibx-service-runner.h
+        part2/dfslib-clientnode-p2.cpp
+        part2/dfslib-clientnode-p2.h
+        part2/dfslib-shared-p2.cpp
+        part2/dfslib-shared-p2.h
+        )
+
+target_link_libraries(dfs-client-p2
+        -fPIC
+        -fno-omit-frame-pointer
+        -fsanitize=address
+        -L/usr/local/lib
+        protobuf
+        grpc
+        grpc++
+        pthread
+        grpc++_reflection
+        )
+target_link_libraries(dfs-client-p2 -static-libasan)
+
+
+add_executable(dfs-server-p2
+        part2/proto-src/dfs-service.grpc.pb.cc
+        part2/proto-src/dfs-service.grpc.pb.h
+        part2/proto-src/dfs-service.pb.cc
+        part2/proto-src/dfs-service.pb.h
+        part2/src/dfs-server-p2.cpp
+        part2/src/dfs-utils.h
+        part2/src/dfslibx-call-data.h
+        part2/src/CRC.h
+        part2/src/dfslibx-service-runner.h
+        part2/dfslib-servernode-p2.cpp
+        part2/dfslib-servernode-p2.h
+        part2/dfslib-shared-p2.cpp
+        part2/dfslib-shared-p2.h
+        )
+
+target_link_libraries(dfs-server-p2
+        -fPIC
+        -fno-omit-frame-pointer
+        -fsanitize=address
+        -L/usr/local/lib
+        protobuf
+        grpc
+        grpc++
+        pthread
+        grpc++_reflection
+        )
+target_link_libraries(dfs-server-p2 -static-libasan)

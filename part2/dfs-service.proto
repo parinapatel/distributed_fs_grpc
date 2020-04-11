@@ -7,26 +7,69 @@ service DFSService {
     // Add your service calls here
 
     // 1. REQUIRED (Parts 1 & 2): A method to store files on the server
+    rpc store_file(stream  file_stream) returns (file_response);
 
     // 2. REQUIRED (Parts 1 & 2): A method to fetch files from the server
+  rpc fetch_file(file_request) returns (stream file_stream);
 
     // 3. REQUIRED (Parts 1 & 2): A method to list all files on the server
+  rpc list_file(empty) returns (stream file_list);
 
     // 4. REQUIRED (Parts 1 & 2): A method to get the status of a file on the server
+  rpc stat_file(file_request) returns (file_response);
 
     // 5. REQUIRED (Part 2 only): A method to request a write lock from the server
-
+  rpc lock_file(file_request)  returns (file_response);
     // 6. REQUIRED (Part 2 only): A method named CallbackList to handle asynchronous file listing requests
     //                            from a client. This method should return a listing of files along with their
     //                            attribute information. The expected attribute information should include name,
     //                            size, modified time, and creation time.
 
-    // 7. REQUIRED (Part 2 only): A method to delete a file from the server
-
-    // 8. Any other methods you deem necessary to complete the tasks of this assignment
+  rpc CallbackList(empty) returns (file_list);
+  // 7. REQUIRED (Part 2 only): A method to delete a file from the server
+  rpc delete_file(file_request) returns (file_response) ;
+  // 8. Any other methods you deem necessary to complete the tasks of this assignment
 
 
 }
 
 // Add your message types here
+
+
+// Add your message types here
+
+message file_stream{
+  string file_name = 1;
+  bytes file_stats = 2;
+  bytes file_data = 3;
+  string client_id = 4;
+  uint32 file_CRC = 5 ;
+};
+
+message file_request{
+  string file_name = 1;
+  string client_id = 2;
+
+};
+
+message file_response{
+  string file_name = 1;
+  string client_id = 2 ;
+  int32 file_transfer_status = 3;
+  bytes file_stats = 4;
+  uint32 file_CRC = 5 ;
+  bool file_lock = 6;
+};
+
+message file_list{
+  bytes files = 1;
+  int32  file_length = 2;
+}
+
+message empty {
+  string name = 1;
+}
+
+
+
 
