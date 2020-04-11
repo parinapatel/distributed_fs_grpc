@@ -41,10 +41,11 @@ extern dfs_log_level_e DFS_LOG_LEVEL;
 // message types you are using to indicate
 // a file request and a listing of files from the server.
 //
-using FileRequestType = FileRequest;
-using FileListResponseType = FileList;
+using FileRequestType = dfs_service::empty;
+using FileListResponseType = dfs_service::file_list;
 
 DFSClientNodeP2::DFSClientNodeP2() : DFSClientNode() {}
+
 DFSClientNodeP2::~DFSClientNodeP2() {}
 
 grpc::StatusCode DFSClientNodeP2::RequestWriteAccess(const std::string &filename) {
@@ -66,7 +67,7 @@ grpc::StatusCode DFSClientNodeP2::RequestWriteAccess(const std::string &filename
     // StatusCode::CANCELLED otherwise
     //
     //
-
+    return grpc::StatusCode::UNIMPLEMENTED;
 }
 
 grpc::StatusCode DFSClientNodeP2::Store(const std::string &filename) {
@@ -95,6 +96,7 @@ grpc::StatusCode DFSClientNodeP2::Store(const std::string &filename) {
     // StatusCode::CANCELLED otherwise
     //
     //
+    return grpc::StatusCode::UNIMPLEMENTED;
 
 }
 
@@ -122,6 +124,8 @@ grpc::StatusCode DFSClientNodeP2::Fetch(const std::string &filename) {
     //
     // Hint: You may want to match the mtime on local files to the server's mtime
     //
+    return grpc::StatusCode::UNIMPLEMENTED;
+
 }
 
 grpc::StatusCode DFSClientNodeP2::Delete(const std::string &filename) {
@@ -145,6 +149,7 @@ grpc::StatusCode DFSClientNodeP2::Delete(const std::string &filename) {
     // StatusCode::CANCELLED otherwise
     //
     //
+    return grpc::StatusCode::UNIMPLEMENTED;
 
 }
 
@@ -166,6 +171,8 @@ grpc::StatusCode DFSClientNodeP2::List(std::map<std::string,int>* file_map, bool
     // StatusCode::CANCELLED otherwise
     //
     //
+    return grpc::StatusCode::UNIMPLEMENTED;
+
 }
 
 grpc::StatusCode DFSClientNodeP2::Stat(const std::string &filename, void* file_status) {
@@ -187,6 +194,8 @@ grpc::StatusCode DFSClientNodeP2::Stat(const std::string &filename, void* file_s
     // StatusCode::CANCELLED otherwise
     //
     //
+    return grpc::StatusCode::UNIMPLEMENTED;
+
 }
 
 void DFSClientNodeP2::InotifyWatcherCallback(std::function<void()> callback) {

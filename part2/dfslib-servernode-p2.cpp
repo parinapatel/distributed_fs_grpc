@@ -37,8 +37,8 @@ using dfs_service::DFSService;
 // message types you are using in your `dfs-service.proto` file
 // to indicate a file request and a listing of files from the server
 //
-using FileRequestType = FileRequest;
-using FileListResponseType = FileList;
+using FileRequestType = dfs_service::empty;
+using FileListResponseType = dfs_service::file_list;
 
 extern dfs_log_level_e DFS_LOG_LEVEL;
 
@@ -98,15 +98,50 @@ private:
     /** CRC Table kept in memory for faster calculations **/
     CRC::Table<std::uint32_t, 32> crc_table;
 
+
+    std::map<std::string, std::string> lock_file_map{};
+
+    bool check_for_file_lock(std::string file_path, std::string client_id) {
+        if (lock_file_map.count(file_path) == 0) {
+            return UNLOCKED;
+        }
+        if (lock_file_map[file_path] == client_id) {
+            return UNLOCKED;
+        }
+        return LOCKED;
+    }
+
+    bool acquire_file_lock(std::string file_path, std::string client_id) {
+        if (lock_file_map.count(file_path) != 0) {
+            lock_file_map[file_path] = client_id;
+            return LOCKED;
+        } else return UNLOCKED;
+    }
+
+    std::string find_lock_client(std::string file_path) {
+        if (lock_file_map.count(file_path) != 0) {
+            return "";
+        } else return lock_file_map[file_path];
+    }
+
+    bool unlock_file_lock(std::string file_path) {
+        if (lock_file_map.count(file_path) == 0) {
+            return UNLOCKED;
+        }
+        if (lock_file_map.erase(file_path) > 0) return UNLOCKED;
+        return LOCKED;
+    }
+
+
 public:
 
-    DFSServiceImpl(const std::string& mount_path, const std::string& server_address, int num_async_threads):
-        mount_path(mount_path), crc_table(CRC::CRC_32()) {
+    DFSServiceImpl(const std::string &mount_path, const std::string &server_address, int num_async_threads) :
+            mount_path(mount_path), crc_table(CRC::CRC_32()) {
 
         this->runner.SetService(this);
         this->runner.SetAddress(server_address);
         this->runner.SetNumThreads(num_async_threads);
-        this->runner.SetQueuedRequestsCallback([&]{ this->ProcessQueuedRequests(); });
+        this->runner.SetQueuedRequestsCallback([&] { this->ProcessQueuedRequests(); });
 
     }
 
@@ -167,6 +202,7 @@ public:
         // The client should receive a list of files or modifications that represent the changes this service
         // is aware of. The client will then need to make the appropriate calls based on those changes.
         //
+        CallbackList(context, request, response);
 
     }
 
@@ -205,6 +241,7 @@ public:
                     this->queued_tags.end(),
                     [](QueueRequest<FileRequestType, FileListResponseType>& queue_request) { return queue_request.finished; }
                 ), this->queued_tags.end());
+                break;
 
             }
         }
@@ -216,6 +253,269 @@ public:
     // Add your additional code here, including
     // the implementations of your rpc protocol methods.
     //
+
+
+    ::grpc::Status store_file(::grpc::ServerContext *context, ::grpc::ServerReader<::dfs_service::file_stream> *reader,
+                              ::dfs_service::file_response *response) override {
+
+        dfs_log(LL_DEBUG3) << "Start Storing The File.";
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+
+        //    Define Variable
+        ::dfs_service::file_stream file_content;
+
+        reader->Read(&file_content);
+        response->set_file_name(file_content.file_name());
+        response->set_client_id(file_content.client_id());
+        std::string file_name = WrapPath(file_content.file_name());
+        if (check_for_file_lock(file_name, file_content.client_id()) == UNLOCKED) {
+            if (acquire_file_lock(file_name, file_content.client_id()) != LOCKED) {
+                response->set_file_lock(LOCKED);
+                response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
+                dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
+                                  << find_lock_client(file_name);
+                return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                      "Given file ; " + file_content.file_name() + " is locked by another client.");
+            }
+        }
+
+
+        if (check_file_content(file_name, &this->crc_table, response->file_crc()) == FILE_EXIST)
+            return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS,
+                                  "file " + file_content.file_name() + " already exist on server");
+
+
+        if (write_to_file(file_name, reader) == -1) {
+            dfs_log(LL_ERROR) << "Write To file Failed.";
+            if (unlock_file_lock(file_name) != UNLOCKED)
+                return ::grpc::Status(::grpc::StatusCode::INTERNAL, "UNLOCK FAILED.");
+            response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
+        }
+
+        dfs_log(LL_DEBUG3) << "Successfully Written the File and Getting Stats";
+        response->set_file_transfer_status(FILE_TRANSFER_SUCCESS);
+        response->set_file_crc(dfs_file_checksum(file_name, &this->crc_table));
+        struct stat file_status = get_file_stats(file_name, response);
+        response->set_file_name(file_name);
+        response->set_file_stats(&file_status, sizeof(file_status));
+
+        dfs_log(LL_DEBUG3) << "Successfully Sent the resposne and sending reply";
+        if (unlock_file_lock(file_name) != UNLOCKED)
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL, "UNLOCK FAILED.");
+        else
+            return ::grpc::Status::OK;
+
+    }
+
+
+    // 2. REQUIRED (Parts 1 & 2): A method to fetch files from the server
+    ::grpc::Status fetch_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                              ::grpc::ServerWriter<::dfs_service::file_stream> *writer) override {
+
+        dfs_log(LL_DEBUG3) << "Start Storing The File.";
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+        std::string file_name = WrapPath(request->file_name());
+        ::dfs_service::file_stream file_content;
+        file_content.set_file_name(file_name);
+
+        ::dfs_service::file_response temp;
+        struct stat temp_file_stats = get_file_stats(file_name, &temp);
+        if (temp.file_transfer_status() == FILE_TRANSFER_FAILURE) {
+            dfs_log(LL_ERROR) << "Write To file Failed.";
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
+        } else {
+
+            file_content.set_file_stats(&temp_file_stats, sizeof(temp_file_stats));
+            file_content.set_file_crc(dfs_file_checksum(file_name, &this->crc_table));
+
+            writer->Write(file_content);
+
+            if (check_for_file_lock(file_name, request->client_id()) == LOCKED) {
+                dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
+                                  << find_lock_client(file_name);
+                return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                      "Given file ; " + file_content.file_name() + " is locked by another client.");
+            } else {
+                if (read_file(file_name, writer) == -1) {
+                    dfs_log(LL_ERROR) << "Write To file Failed.";
+                    return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
+                }
+            }
+
+        }
+        return ::grpc::Status::OK;
+
+    }
+
+    // 3. REQUIRED (Parts 1 & 2): A method to list all files on the server
+    ::grpc::Status list_file(::grpc::ServerContext *context, const ::dfs_service::empty *request,
+                             ::grpc::ServerWriter<::dfs_service::file_list> *writer) override {
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+        DIR *current_dir;
+        struct file_object temp_file_object{};
+
+
+        struct dirent *entry;
+
+        current_dir = opendir(mount_path.c_str());
+        if (current_dir == nullptr) {
+            dfs_log(LL_ERROR) << "Error in Opening dir: " << mount_path << strerror(errno);
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL,
+                                  "Error in Opening dir: " + mount_path + strerror(errno));
+        }
+        struct stat temp_stat{};
+        ::dfs_service::file_list fileList;
+
+        while ((entry = readdir(current_dir)) != nullptr) {
+            if (std::strcmp(entry->d_name, ".") != 0 && std::strcmp(entry->d_name, "..") != 0 &&
+                entry->d_name[0] != '.') {
+                stat(WrapPath(entry->d_name).c_str(), &temp_stat);
+                strcpy(temp_file_object.file_path, entry->d_name);
+                temp_file_object.mtime = temp_stat.st_mtim.tv_sec;
+                dfs_log(LL_DEBUG3) << temp_file_object.file_path;
+
+                fileList.set_files(&temp_file_object, sizeof(struct file_object));
+                writer->Write(fileList);
+            }
+        }
+        closedir(current_dir);
+        return ::grpc::Status::OK;
+
+    }
+
+    // 4. REQUIRED (Parts 1 & 2): A method to get the status of a file on the server
+    ::grpc::Status stat_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                             ::dfs_service::file_response *response) override {
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+
+        std::string file_path = WrapPath(request->file_name());
+        struct stat file_stats{};
+        file_stats = get_file_stats(file_path, response);
+        response->set_file_name(file_path);
+        response->set_file_stats(&file_stats, sizeof(struct stat));
+
+        if (response->file_transfer_status() == FILE_TRANSFER_FAILURE) {
+            return ::grpc::Status(StatusCode::NOT_FOUND, "FIle Not found.");
+        }
+        return ::grpc::Status::OK;
+
+    }
+
+
+    // 5. REQUIRED (Part 2 only): A method to request a write lock from the server
+    ::grpc::Status lock_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                             ::dfs_service::file_response *response) override {
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+        std::string file_path = WrapPath(request->file_name());
+
+        if (check_for_file_lock(file_path, request->client_id()) == UNLOCKED) {
+            if (acquire_file_lock(file_path, request->client_id()) != LOCKED) {
+//                response->set_file_lock(LOCKED);
+                response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
+                dfs_log(LL_DEBUG) << "Given file ; " + request->file_name() + " is locked by client : "
+                                  << find_lock_client(file_path);
+                return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                      "Given file ; " + request->file_name() + " is locked by another client.");
+            }
+        }
+        response->set_file_name(request->file_name());
+        response->set_file_lock(LOCKED);
+        response->set_client_id(request->client_id());
+        return ::grpc::Status::OK;
+    }
+
+
+    // 6. REQUIRED (Part 2 only): A method named CallbackList to handle asynchronous file listing requests
+    //                            from a client. This method should return a listing of files along with their
+    //                            attribute information. The expected attribute information should include name,
+    //                            size, modified time, and creation time.
+    ::grpc::Status CallbackList(::grpc::ServerContext *context, const ::dfs_service::empty *request,
+                                ::dfs_service::file_list *response) override {
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+
+        DIR *current_dir;
+        struct file_object temp_file_object{};
+        std::vector<struct file_object> file_storage_list{};
+
+        struct dirent *entry;
+
+        current_dir = opendir(mount_path.c_str());
+        if (current_dir == nullptr) {
+            dfs_log(LL_ERROR) << "Error in Opening dir: " << mount_path << strerror(errno);
+            return ::grpc::Status(::grpc::StatusCode::INTERNAL,
+                                  "Error in Opening dir: " + mount_path + strerror(errno));
+        }
+        struct stat temp_stat{};
+        ::dfs_service::file_list fileList;
+
+        while ((entry = readdir(current_dir)) != nullptr) {
+            if (std::strcmp(entry->d_name, ".") != 0 && std::strcmp(entry->d_name, "..") != 0 &&
+                entry->d_name[0] != '.') {
+                stat(WrapPath(entry->d_name).c_str(), &temp_stat);
+                strcpy(temp_file_object.file_path, entry->d_name);
+                temp_file_object.mtime = temp_stat.st_mtim.tv_sec;
+                temp_file_object.create_time = temp_stat.st_ctim.tv_sec;
+                temp_file_object.file_size = temp_stat.st_size;
+                dfs_log(LL_DEBUG3) << temp_file_object.file_path;
+                file_storage_list.push_back(temp_file_object);
+            }
+        }
+        closedir(current_dir);
+
+
+        response->set_file_length(file_storage_list.size());
+        struct file_object temp_arr[file_storage_list.size()];
+        std::copy(file_storage_list.begin(), file_storage_list.end(), temp_arr);
+        response->set_files(&temp_arr, sizeof(temp_arr));
+        return ::grpc::Status::OK;
+    }
+
+
+    // 7. REQUIRED (Part 2 only): A method to delete a file from the server
+    ::grpc::Status delete_file(::grpc::ServerContext *context, const ::dfs_service::file_request *request,
+                               ::dfs_service::file_response *response) override {
+        if (context->IsCancelled()) {
+            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
+            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
+                                  "Context is cancelled or Deadline Exceeded or Timeout");
+        }
+
+        ::std::string file_name = WrapPath(request->file_name());
+        response->set_file_name(file_name);
+
+        if (remove(file_name.c_str()) == -1) {
+            response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
+            dfs_log(LL_ERROR) << "File Deletion Failed for File : " << file_name << strerror(errno);
+            return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "File Deletion Failed.");
+        } else response->set_file_transfer_status(FILE_TRANSFER_SUCCESS);
+
+        return ::grpc::Status::OK;
+    }
 
 
 };
