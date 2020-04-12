@@ -43,6 +43,7 @@ using FileListResponseType = dfs_service::file_list;
 
 extern dfs_log_level_e DFS_LOG_LEVEL;
 
+
 //
 // STUDENT INSTRUCTION:
 //
@@ -86,7 +87,8 @@ private:
     std::vector<QueueRequest<FileRequestType, FileListResponseType>> queued_tags;
 
     std::mutex lock_mutex;
-    std::map<std::string, std::string> lock_file_map{};
+    std::map<std::string, std::string> lock_file_map;
+
 
     /**
      * Prepend the mount path to the filename.
@@ -101,12 +103,11 @@ private:
     /** CRC Table kept in memory for faster calculations **/
     CRC::Table<std::uint32_t, 32> crc_table;
 
-
     void log_lock_hash() {
         auto it = lock_file_map.begin();
-        dfs_log(LL_SYSINFO) << lock_file_map.size();
+        dfs_log(LL_DEBUG) << "Lock Map Size in Log Lock hash function : " << lock_file_map.size();
         while (it != lock_file_map.end()) {
-            dfs_log(LL_SYSINFO) << "key:" << it->first << "\tvalue : " << it->second;
+            dfs_log(LL_DEBUG) << "key:" << it->first << "\tvalue : " << it->second;
             it++;
         }
     }
@@ -118,13 +119,13 @@ private:
 
     bool acquire_file_lock(const std::string &file_path, const std::string &client_id) {
         std::lock_guard<std::mutex> lock(lock_mutex);
-        dfs_log(LL_SYSINFO) << "BEFORE LOCK MUTEX";
+        dfs_log(LL_DEBUG) << "BEFORE LOCK MUTEX , Number of entries " << lock_file_map.size();
         log_lock_hash();
 
         if (check_for_file_lock(file_path, client_id) == UNLOCKED) {
             lock_file_map[file_path] = client_id;
-            dfs_log(LL_SYSINFO) << "ACQUIRING File :  " << file_path << "\t" << client_id;
-            dfs_log(LL_SYSINFO) << "AFTER LOCK MUTEX";
+            dfs_log(LL_DEBUG) << "ACQUIRING File :  " << file_path << "\t" << client_id;
+            dfs_log(LL_DEBUG) << "AFTER LOCK MUTEX: " << lock_file_map.size();
             log_lock_hash();
 
             return LOCKED;
@@ -145,7 +146,6 @@ private:
         std::lock_guard<std::mutex> lock(lock_mutex);
 
         dfs_log(LL_DEBUG) << "Unlocking  File :  " << file_path;
-        log_lock_hash();
 
         if (lock_file_map.count(file_path) == 0) {
             return UNLOCKED;
@@ -155,6 +155,7 @@ private:
         }
         return LOCKED;
     }
+
 
 
 public:
@@ -297,15 +298,11 @@ public:
         response->set_client_id(file_content.client_id());
         std::string file_name = WrapPath(file_content.file_name());
 
-        std::cout << check_for_file_lock(file_name, file_content.client_id()) << std::endl;
-//        std::lock_guard<std::mutex> lock(lock_mutex);
         if (!check_for_file_lock(file_name, file_content.client_id())) {
-            dfs_log(LL_SYSINFO) << "Locking File " << file_name << "\t" << file_content.client_id();
+            dfs_log(LL_DEBUG) << "Locking File " << file_name << "\t" << file_content.client_id();
             if (acquire_file_lock(file_name, file_content.client_id()) != LOCKED) {
                 response->set_file_lock(LOCKED);
-
-
-            } else { (unlock_file_lock(file_name)); };
+            }
         } else {
             response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
             dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
@@ -323,7 +320,9 @@ public:
                                   "file " + file_content.file_name() + " already exist on server");
 
         }
-        sleep(20);
+        dfs_log(LL_DEBUG) << "Printing in Store File Function ";
+        dfs_log(LL_DEBUG) << "Done Printing in Store File Function and going in sleep ";
+
         if (write_to_file(file_name, reader) == -1) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
 
@@ -622,3 +621,4 @@ void DFSServerNode::Start() {
 //
 // Add your additional definitions here
 //
+
