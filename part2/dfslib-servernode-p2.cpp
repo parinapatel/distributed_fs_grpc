@@ -101,34 +101,58 @@ private:
 
     std::map<std::string, std::string> lock_file_map{};
 
+    void log_lock_hash(std::map<std::string, std::string> lock_file_map) {
+        auto it = lock_file_map.begin();
+        while (it != lock_file_map.end()) {
+            dfs_log(LL_DEBUG3) << "key:" << it->first << "\tvalue : " << it->second;
+            it++;
+        }
+    }
+
     bool check_for_file_lock(std::string file_path, std::string client_id) {
+        dfs_log(LL_DEBUG) << "Locking request of  File :  " << file_path << "by Client" << client_id;
+        log_lock_hash(lock_file_map);
         if (lock_file_map.count(file_path) == 0) {
             return UNLOCKED;
         }
-        if (lock_file_map[file_path] == client_id) {
-            return UNLOCKED;
-        }
+//        if (lock_file_map[file_path] == client_id) {
+//            return UNLOCKED;
+//        }
         return LOCKED;
     }
 
     bool acquire_file_lock(std::string file_path, std::string client_id) {
-        if (lock_file_map.count(file_path) != 0) {
-            lock_file_map[file_path] = client_id;
-            return LOCKED;
-        } else return UNLOCKED;
+
+//        if (lock_file_map.count(file_path) != 0) {
+        lock_file_map[file_path] = client_id;
+        dfs_log(LL_DEBUG) << "Locking File :  " << file_path;
+        log_lock_hash(lock_file_map);
+
+        return LOCKED;
+//        } else return UNLOCKED;
     }
 
     std::string find_lock_client(std::string file_path) {
-        if (lock_file_map.count(file_path) != 0) {
-            return "";
+        log_lock_hash(lock_file_map);
+
+        if (lock_file_map.count(file_path) == 0) {
+            return "Already Unlocked.";
         } else return lock_file_map[file_path];
     }
 
     bool unlock_file_lock(std::string file_path) {
+        log_lock_hash(lock_file_map);
+        dfs_log(LL_DEBUG) << "Unlocking  File :  " << file_path;
+
         if (lock_file_map.count(file_path) == 0) {
+            log_lock_hash(lock_file_map);
+
             return UNLOCKED;
         }
-        if (lock_file_map.erase(file_path) > 0) return UNLOCKED;
+        if (lock_file_map.erase(file_path) > 0) {
+            log_lock_hash(lock_file_map);
+            return UNLOCKED;
+        }
         return LOCKED;
     }
 
@@ -225,7 +249,7 @@ public:
 
             // Guarded section for queue
             {
-                dfs_log(LL_DEBUG2) << "Waiting for queue guard";
+//                dfs_log(LL_DEBUG2) << "Waiting for queue guard";
                 std::lock_guard<std::mutex> lock(queue_mutex);
 
 
@@ -267,26 +291,34 @@ public:
         ::dfs_service::file_stream file_content;
 
         reader->Read(&file_content);
+
         response->set_file_name(file_content.file_name());
         response->set_client_id(file_content.client_id());
         std::string file_name = WrapPath(file_content.file_name());
+
+
         if (check_for_file_lock(file_name, file_content.client_id()) == UNLOCKED) {
+
             if (acquire_file_lock(file_name, file_content.client_id()) != LOCKED) {
                 response->set_file_lock(LOCKED);
-                response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
-                dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
-                                  << find_lock_client(file_name);
-                return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
-                                      "Given file ; " + file_content.file_name() + " is locked by another client.");
-            }
+            } else (unlock_file_lock(file_name));
+        } else {
+            response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
+            dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
+                              << find_lock_client(file_name);
+            return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                  "Given file ; " + file_content.file_name() + " is locked by another client.");
         }
 
 
-        if (check_file_content(file_name, &this->crc_table, response->file_crc()) == FILE_EXIST)
+        if (check_file_content(file_name, &this->crc_table, file_content.file_crc()) == FILE_EXIST) {
+            unlock_file_lock(file_name);
             return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS,
                                   "file " + file_content.file_name() + " already exist on server");
 
+        }
 
+        dfs_log(LL_DEBUG3) << "didnt check";
         if (write_to_file(file_name, reader) == -1) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
             if (unlock_file_lock(file_name) != UNLOCKED)
@@ -301,7 +333,6 @@ public:
         struct stat file_status = get_file_stats(file_name, response);
         response->set_file_name(file_name);
         response->set_file_stats(&file_status, sizeof(file_status));
-
         dfs_log(LL_DEBUG3) << "Successfully Sent the resposne and sending reply";
         if (unlock_file_lock(file_name) != UNLOCKED)
             return ::grpc::Status(::grpc::StatusCode::INTERNAL, "UNLOCK FAILED.");
@@ -325,8 +356,10 @@ public:
         ::dfs_service::file_stream file_content;
         file_content.set_file_name(file_name);
 
+
         ::dfs_service::file_response temp;
         struct stat temp_file_stats = get_file_stats(file_name, &temp);
+
         if (temp.file_transfer_status() == FILE_TRANSFER_FAILURE) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
             return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
@@ -456,11 +489,6 @@ public:
     //                            size, modified time, and creation time.
     ::grpc::Status CallbackList(::grpc::ServerContext *context, const ::dfs_service::empty *request,
                                 ::dfs_service::file_list *response) override {
-        if (context->IsCancelled()) {
-            dfs_log(LL_DEBUG2) << "Context is cancelled or Deadline Exceeded.";
-            return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
-                                  "Context is cancelled or Deadline Exceeded or Timeout");
-        }
 
         DIR *current_dir;
         struct file_object temp_file_object{};
@@ -485,9 +513,9 @@ public:
                 temp_file_object.mtime = temp_stat.st_mtim.tv_sec;
                 temp_file_object.create_time = temp_stat.st_ctim.tv_sec;
                 temp_file_object.file_size = temp_stat.st_size;
-                temp_file_object.file_crc = dfs_file_checksum(temp_file_object.file_path, &this->crc_table);
+                temp_file_object.file_crc = dfs_file_checksum(WrapPath(temp_file_object.file_path), &this->crc_table);
 
-                dfs_log(LL_DEBUG3) << temp_file_object.file_path;
+                dfs_log(LL_DEBUG3) << temp_file_object.file_path << temp_file_object.file_crc;
                 file_storage_list.push_back(temp_file_object);
             }
         }

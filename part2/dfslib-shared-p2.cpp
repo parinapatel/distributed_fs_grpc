@@ -11,8 +11,8 @@
 // Note: this may be adjusted from the CLI in
 // both the client and server executables.
 // This shouldn't be changed at the file level.
-//dfs_log_level_e DFS_LOG_LEVEL = LL_ERROR;
-dfs_log_level_e DFS_LOG_LEVEL = LL_DEBUG3;
+dfs_log_level_e DFS_LOG_LEVEL = LL_ERROR;
+//dfs_log_level_e DFS_LOG_LEVEL = LL_DEBUG3;
 //
 // STUDENT INSTRUCTION:
 //
@@ -60,6 +60,7 @@ struct stat get_file_stats(std::string filepath, ::dfs_service::file_response *r
 
 bool check_file_content(std::string file_path, CRC::Table<std::uint32_t, 32> *table, std::uint32_t CRC) {
     std::uint32_t server_crc = dfs_file_checksum(file_path, table);
+    dfs_log(LL_DEBUG) << "CURRENT_CRC: " << server_crc << "\t incoming CRC : " << CRC;
     if (server_crc == CRC) {
         return FILE_EXIST;
     } else return false;

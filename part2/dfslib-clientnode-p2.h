@@ -146,5 +146,6 @@ public:
     //
 
 
+    grpc::StatusCode Lock(const std::string &filename);
 };
 #endif

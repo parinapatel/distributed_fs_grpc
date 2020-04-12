@@ -78,7 +78,7 @@ grpc::StatusCode DFSClientNodeP2::RequestWriteAccess(const std::string &filename
     dfs_service::file_request client_request;
 
     client_request.set_file_name(filename);
-    client_request.set_client_id(DFSClientNode::ClientId());
+    client_request.set_client_id(this->client_id);
     Status server_status = service_stub->lock_file(&context, client_request, &server_response);
 
     if (server_status.ok()) {
@@ -130,7 +130,8 @@ grpc::StatusCode DFSClientNodeP2::Store(const std::string &filename) {
     std::uint32_t client_file_crc = dfs_file_checksum(file_path, &this->crc_table);
 
     client_request.set_file_crc(client_file_crc);
-    client_request.set_client_id(DFSClientNode::ClientId());
+    client_request.set_client_id(this->client_id);
+
     std::ifstream file_reader;
     file_reader.open(file_path, std::ios::in | std::ios::binary);
 
@@ -215,15 +216,18 @@ grpc::StatusCode DFSClientNodeP2::Fetch(const std::string &filename) {
     std::ofstream file_writer;
 
     client_request.set_file_name(filename);
-    client_request.set_client_id(DFSClientNode::ClientId());
+    client_request.set_client_id(this->client_id);
 
     std::unique_ptr<ClientReader<::dfs_service::file_stream>> request_reader(
             service_stub->fetch_file(&context, client_request));
 
     request_reader->Read(&server_response);
-    if (check_file_content(file_path, &this->crc_table, server_response.file_crc()) == FILE_EXIST)
+
+    if (check_file_content(file_path, &this->crc_table, server_response.file_crc()) == FILE_EXIST) {
+        dfs_log(LL_DEBUG) << "File Exist , return status code .";
         return ::grpc::StatusCode::ALREADY_EXISTS;
 
+    }
 
     file_writer.open(file_path, std::ios::out | std::ios::binary);
 
@@ -284,7 +288,7 @@ grpc::StatusCode DFSClientNodeP2::Delete(const std::string &filename) {
     dfs_service::file_request client_request;
 
     client_request.set_file_name(filename);
-    client_request.set_client_id(DFSClientNode::ClientId());
+    client_request.set_client_id(this->client_id);
 
     Status server_status = service_stub->delete_file(&context, client_request, &server_response);
 
@@ -388,7 +392,7 @@ grpc::StatusCode DFSClientNodeP2::Stat(const std::string &filename, void* file_s
     dfs_service::file_request client_request;
 
     client_request.set_file_name(filename);
-    client_request.set_client_id(DFSClientNode::ClientId());
+    client_request.set_client_id(this->client_id);
 
     Status server_status = service_stub->stat_file(&context, client_request, &server_response);
 
@@ -470,7 +474,7 @@ void DFSClientNodeP2::HandleCallbackList() {
     struct stat file_stat{};
 
     struct file_object temp_file_object{};
-
+    bool mounted = false;
     // Block until the next result is available in the completion queue.
     while (completion_queue.Next(&tag, &ok)) {
         {
@@ -516,14 +520,17 @@ void DFSClientNodeP2::HandleCallbackList() {
                 }
                 std::string remote_file_path;
                 for (int i = 0; i < dir_length; i++) {
-                    dfs_log(LL_DEBUG) << "file Name: " << file_storage_list[i].file_path;
                     remote_file_path = file_storage_list[i].file_path;
                     if (local_storage.count(remote_file_path) > 0) {
                         if (file_storage_list[i].file_crc !=
-                            dfs_file_checksum(local_storage[remote_file_path].file_path, &this->crc_table)) {
-                            if (file_storage_list[i].mtime >= local_storage[remote_file_path].mtime) {
+                            dfs_file_checksum(WrapPath(local_storage[remote_file_path].file_path), &this->crc_table)) {
+                            if (file_storage_list[i].mtime > local_storage[remote_file_path].mtime) {
+                                dfs_log(LL_SYSINFO) << "Copying New File";
                                 this->Fetch(remote_file_path);
-                            } else this->Store(remote_file_path);
+                            } else {
+                                dfs_log(LL_SYSINFO) << "Pushing New File";
+                                this->Store(remote_file_path);
+                            }
                         }
                         local_storage.erase(remote_file_path);
                     } else {
@@ -534,11 +541,17 @@ void DFSClientNodeP2::HandleCallbackList() {
                 if (!local_storage.empty()) {
                     auto it = local_storage.begin();
                     while (it != local_storage.end()) {
-                        if (remove(it->second.file_path) == -1) {
-                            dfs_log(LL_ERROR) << it->second.file_path << "Deletion Failed";
+                        if (mounted) {
+                            if (remove(WrapPath(it->second.file_path).c_str()) == -1) {
+                                dfs_log(LL_ERROR) << it->second.file_path << "Deletion Failed\t" << strerror(errno);
+//                                exit(1);
+                            }
+                        } else {
+                            this->Store(it->second.file_path);
                         }
                         it++;
                     }
+                    mounted = true;
                 }
 
 
@@ -578,6 +591,7 @@ void DFSClientNodeP2::InitCallbackList() {
     CallbackList<FileRequestType, FileListResponseType>();
 }
 
+
 //
 // STUDENT INSTRUCTION:
 //
@@ -585,3 +599,32 @@ void DFSClientNodeP2::InitCallbackList() {
 //
 
 
+
+grpc::StatusCode DFSClientNodeP2::Lock(const std::string &filename) {
+
+
+    ClientContext context;
+    std::chrono::system_clock::time_point timeout =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(deadline_timeout);
+    context.set_deadline(timeout);
+    ::grpc::Status method_status;
+
+
+    ::dfs_service::file_response server_response;
+    dfs_service::file_request client_request;
+
+    client_request.set_file_name(filename);
+    client_request.set_client_id(this->client_id);
+
+    Status server_status = service_stub->lock_file(&context, client_request, &server_response);
+
+    if (server_response.file_lock() == LOCKED) { dfs_log(LL_SYSINFO) << "ALL OK"; }
+
+    if (server_status.ok()) {
+        return StatusCode::OK;
+    } else {
+        dfs_log(LL_ERROR) << server_status.error_details();
+        dfs_log(LL_ERROR) << "Error Message :" << server_status.error_message();
+        return server_status.error_code();
+    }
+}
