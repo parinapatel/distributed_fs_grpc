@@ -30,6 +30,7 @@ using grpc::ServerBuilder;
 using dfs_service::DFSService;
 
 
+
 //
 // STUDENT INSTRUCTION:
 //
@@ -67,8 +68,8 @@ extern dfs_log_level_e DFS_LOG_LEVEL;
 //      - Hint: as the crc checksum is a simple integer, you can pass it around inside your message types.
 //
 class DFSServiceImpl final :
-    public DFSService::WithAsyncMethod_CallbackList<DFSService::Service>,
-        public DFSCallDataManager<FileRequestType , FileListResponseType> {
+        public DFSService::WithAsyncMethod_CallbackList<DFSService::Service>,
+        public DFSCallDataManager<FileRequestType, FileListResponseType> {
 
 private:
 
@@ -84,6 +85,8 @@ private:
     /** The vector of queued tags used to manage asynchronous requests **/
     std::vector<QueueRequest<FileRequestType, FileListResponseType>> queued_tags;
 
+    std::mutex lock_mutex;
+    std::map<std::string, std::string> lock_file_map{};
 
     /**
      * Prepend the mount path to the filename.
@@ -99,58 +102,55 @@ private:
     CRC::Table<std::uint32_t, 32> crc_table;
 
 
-    std::map<std::string, std::string> lock_file_map{};
-
-    void log_lock_hash(std::map<std::string, std::string> lock_file_map) {
+    void log_lock_hash() {
         auto it = lock_file_map.begin();
+        dfs_log(LL_SYSINFO) << lock_file_map.size();
         while (it != lock_file_map.end()) {
-            dfs_log(LL_DEBUG3) << "key:" << it->first << "\tvalue : " << it->second;
+            dfs_log(LL_SYSINFO) << "key:" << it->first << "\tvalue : " << it->second;
             it++;
         }
     }
 
-    bool check_for_file_lock(std::string file_path, std::string client_id) {
-        dfs_log(LL_DEBUG) << "Locking request of  File :  " << file_path << "by Client" << client_id;
-        log_lock_hash(lock_file_map);
-        if (lock_file_map.count(file_path) == 0) {
+    bool check_for_file_lock(const std::string &file_path, const std::string &client_id) {
+        return lock_file_map.count(file_path) != 0;
+
+    }
+
+    bool acquire_file_lock(const std::string &file_path, const std::string &client_id) {
+        std::lock_guard<std::mutex> lock(lock_mutex);
+        dfs_log(LL_SYSINFO) << "BEFORE LOCK MUTEX";
+        log_lock_hash();
+
+        if (check_for_file_lock(file_path, client_id) == UNLOCKED) {
+            lock_file_map[file_path] = client_id;
+            dfs_log(LL_SYSINFO) << "ACQUIRING File :  " << file_path << "\t" << client_id;
+            dfs_log(LL_SYSINFO) << "AFTER LOCK MUTEX";
+            log_lock_hash();
+
+            return LOCKED;
+        } else {
             return UNLOCKED;
         }
-//        if (lock_file_map[file_path] == client_id) {
-//            return UNLOCKED;
-//        }
-        return LOCKED;
     }
 
-    bool acquire_file_lock(std::string file_path, std::string client_id) {
+    std::string find_lock_client(const std::string &file_path) {
 
-//        if (lock_file_map.count(file_path) != 0) {
-        lock_file_map[file_path] = client_id;
-        dfs_log(LL_DEBUG) << "Locking File :  " << file_path;
-        log_lock_hash(lock_file_map);
-
-        return LOCKED;
-//        } else return UNLOCKED;
-    }
-
-    std::string find_lock_client(std::string file_path) {
-        log_lock_hash(lock_file_map);
 
         if (lock_file_map.count(file_path) == 0) {
             return "Already Unlocked.";
         } else return lock_file_map[file_path];
     }
 
-    bool unlock_file_lock(std::string file_path) {
-        log_lock_hash(lock_file_map);
+    bool unlock_file_lock(const std::string &file_path) {
+        std::lock_guard<std::mutex> lock(lock_mutex);
+
         dfs_log(LL_DEBUG) << "Unlocking  File :  " << file_path;
+        log_lock_hash();
 
         if (lock_file_map.count(file_path) == 0) {
-            log_lock_hash(lock_file_map);
-
             return UNLOCKED;
         }
         if (lock_file_map.erase(file_path) > 0) {
-            log_lock_hash(lock_file_map);
             return UNLOCKED;
         }
         return LOCKED;
@@ -191,11 +191,11 @@ public:
      * @param cq
      * @param tag
      */
-    void RequestCallback(grpc::ServerContext* context,
-                         FileRequestType* request,
-                         grpc::ServerAsyncResponseWriter<FileListResponseType>* response,
-                         grpc::ServerCompletionQueue* cq,
-                         void* tag) {
+    void RequestCallback(grpc::ServerContext *context,
+                         FileRequestType *request,
+                         grpc::ServerAsyncResponseWriter<FileListResponseType> *response,
+                         grpc::ServerCompletionQueue *cq,
+                         void *tag) {
 
         std::lock_guard<std::mutex> lock(queue_mutex);
         this->queued_tags.emplace_back(context, request, response, cq, tag);
@@ -215,7 +215,7 @@ public:
      * @param request
      * @param response
      */
-    void ProcessCallback(ServerContext* context, FileRequestType* request, FileListResponseType* response) {
+    void ProcessCallback(ServerContext *context, FileRequestType *request, FileListResponseType *response) {
 
         //
         // STUDENT INSTRUCTION:
@@ -234,7 +234,7 @@ public:
      * Processes the queued requests in the queue thread
      */
     void ProcessQueuedRequests() {
-        while(true) {
+        while (true) {
 
             //
             // STUDENT INSTRUCTION:
@@ -253,17 +253,18 @@ public:
                 std::lock_guard<std::mutex> lock(queue_mutex);
 
 
-                for(QueueRequest<FileRequestType, FileListResponseType>& queue_request : this->queued_tags) {
+                for (QueueRequest<FileRequestType, FileListResponseType> &queue_request : this->queued_tags) {
                     this->RequestCallbackList(queue_request.context, queue_request.request,
-                        queue_request.response, queue_request.cq, queue_request.cq, queue_request.tag);
+                                              queue_request.response, queue_request.cq, queue_request.cq,
+                                              queue_request.tag);
                     queue_request.finished = true;
                 }
 
                 // any finished tags first
                 this->queued_tags.erase(std::remove_if(
-                    this->queued_tags.begin(),
-                    this->queued_tags.end(),
-                    [](QueueRequest<FileRequestType, FileListResponseType>& queue_request) { return queue_request.finished; }
+                        this->queued_tags.begin(),
+                        this->queued_tags.end(),
+                        [](QueueRequest<FileRequestType, FileListResponseType> &queue_request) { return queue_request.finished; }
                 ), this->queued_tags.end());
             }
         }
@@ -296,12 +297,15 @@ public:
         response->set_client_id(file_content.client_id());
         std::string file_name = WrapPath(file_content.file_name());
 
-
-        if (check_for_file_lock(file_name, file_content.client_id()) == UNLOCKED) {
-
+        std::cout << check_for_file_lock(file_name, file_content.client_id()) << std::endl;
+//        std::lock_guard<std::mutex> lock(lock_mutex);
+        if (!check_for_file_lock(file_name, file_content.client_id())) {
+            dfs_log(LL_SYSINFO) << "Locking File " << file_name << "\t" << file_content.client_id();
             if (acquire_file_lock(file_name, file_content.client_id()) != LOCKED) {
                 response->set_file_lock(LOCKED);
-            } else (unlock_file_lock(file_name));
+
+
+            } else { (unlock_file_lock(file_name)); };
         } else {
             response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
             dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
@@ -313,16 +317,24 @@ public:
 
         if (check_file_content(file_name, &this->crc_table, file_content.file_crc()) == FILE_EXIST) {
             unlock_file_lock(file_name);
+
+
             return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS,
                                   "file " + file_content.file_name() + " already exist on server");
 
         }
-
-        dfs_log(LL_DEBUG3) << "didnt check";
+        sleep(20);
         if (write_to_file(file_name, reader) == -1) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
-            if (unlock_file_lock(file_name) != UNLOCKED)
+
+
+            if (unlock_file_lock(file_name) != UNLOCKED) {
+
+
                 return ::grpc::Status(::grpc::StatusCode::INTERNAL, "UNLOCK FAILED.");
+            }
+
+
             response->set_file_transfer_status(FILE_TRANSFER_FAILURE);
             return ::grpc::Status(::grpc::StatusCode::NOT_FOUND, "Write of File Failed.");
         }
@@ -334,10 +346,15 @@ public:
         response->set_file_name(file_name);
         response->set_file_stats(&file_status, sizeof(file_status));
         dfs_log(LL_DEBUG3) << "Successfully Sent the resposne and sending reply";
-        if (unlock_file_lock(file_name) != UNLOCKED)
+
+        if (unlock_file_lock(file_name) != UNLOCKED) {
+
             return ::grpc::Status(::grpc::StatusCode::INTERNAL, "UNLOCK FAILED.");
-        else
+        } else {
+
+
             return ::grpc::Status::OK;
+        }
 
     }
 
@@ -574,13 +591,14 @@ public:
  * @param mount_path
  */
 DFSServerNode::DFSServerNode(const std::string &server_address,
-        const std::string &mount_path,
-        int num_async_threads,
-        std::function<void()> callback) :
+                             const std::string &mount_path,
+                             int num_async_threads,
+                             std::function<void()> callback) :
         server_address(server_address),
         mount_path(mount_path),
         num_async_threads(num_async_threads),
         grader_callback(callback) {}
+
 /**
  * Server shutdown
  */
