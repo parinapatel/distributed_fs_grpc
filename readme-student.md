@@ -1,11 +1,12 @@
 
-# Project README file
-
-This is **YOUR** Readme file.
+# CS6200 Distributed File System using GRPC
+Parin Patel : ppatel480@gatech.edu
 
 ## Project Description
 
-Please see [Readme.md](Readme.md) for the rubric we use for evaluating your submission.
+In this project, We are designing and implementing a simple distributed file system (DFS).  First, we will develop several file transfer protocols using gRPC and Protocol Buffers. Next, we are incorporating a weakly consistent synchronization system to manage cache consistency between multiple clients and a single server. 
+
+Source code using a combination of C++14, gRPC, and Protocol Buffers to complete the implementation.
 
 We will manually review your file looking for:
 
