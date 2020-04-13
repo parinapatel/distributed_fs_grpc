@@ -8,6 +8,8 @@ In this project, We are designing and implementing a simple distributed file sys
 
 Source code using a combination of C++14, gRPC, and Protocol Buffers to complete the implementation.
 
+# Part 1 Description :
+
 We will manually review your file looking for:
 
 - A summary description of your project design.  If you wish to use grapics, please simply use a URL to point to a JPG or PNG file that we can review
