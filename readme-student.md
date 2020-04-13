@@ -105,7 +105,7 @@ We are using `stream` GRPC whenever we need to transfer file data or any large d
    
 ## Message and Method Structure:
 GRPC Protos:
-```c++
+```protobuf
 service DFSService {
     //  A method to store files on the server
         rpc store_file(stream  file_stream) returns (file_response);
@@ -239,7 +239,7 @@ Similar to previous part we will be using `stream` to transfer files , Although 
 
 GRPC Message Structures:
 
-```c++
+```protobuf
 message file_stream{
   string file_name = 1;
   bytes file_stats = 2;
