@@ -15,6 +15,9 @@
 
 class DFSClientNodeP2 : public DFSClientNode {
 
+private:
+    std::mutex inotify_mutex;
+
 public:
 
     //
@@ -143,5 +146,6 @@ public:
     //
 
 
+    grpc::StatusCode Lock(const std::string &filename);
 };
 #endif

@@ -26,6 +26,17 @@
 #define DFS_I_EVENT_SIZE (sizeof(struct inotify_event))
 #define DFS_I_BUFFER_SIZE (1024 * (DFS_I_EVENT_SIZE + 16))
 
+
+#define  BUFFER_SIZE 4096
+#define SYNC_CHECK 3
+
+#define FILE_TRANSFER_SUCCESS 200
+#define FILE_TRANSFER_FAILURE 500
+#define FILE_SERVER_EXAUSTED 429
+#define  LOCKED true
+#define  UNLOCKED false
+
+#define  FILE_EXIST true
 /** A file descriptor type **/
 typedef int FileDescriptor;
 
@@ -33,7 +44,7 @@ typedef int FileDescriptor;
 typedef int WatchDescriptor;
 
 /** An inotify callback method **/
-typedef void (*InotifyCallback)(uint, const std::string&, void*);
+typedef void (*InotifyCallback)(uint, const std::string &, void *);
 
 /** The expected struct for the inotify setup in this project **/
 struct NotifyStruct {
@@ -47,7 +58,7 @@ struct NotifyStruct {
 /** The expected event type for the event method in this project **/
 struct EventStruct {
     void* event;
-    void* instance;
+    void *instance;
 };
 
 //
@@ -55,6 +66,23 @@ struct EventStruct {
 //
 // Add any additional shared code here
 //
+
+
+struct file_object {
+    char file_path[256];
+    std::int32_t mtime;
+    std::uint64_t file_size;
+    std::int32_t create_time;
+    std::uint32_t file_crc;
+};
+
+int write_to_file(std::string filepath, ::grpc::ServerReader<::dfs_service::file_stream> *reader);
+
+struct stat get_file_stats(std::string filepath, ::dfs_service::file_response *response);
+
+bool check_file_content(std::string file_path, CRC::Table<std::uint32_t, 32> *table, std::uint32_t CRC);
+
+int read_file(std::string filepath, ::grpc::ServerWriter<::dfs_service::file_stream> *writer);
 
 
 #endif

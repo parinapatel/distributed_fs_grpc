@@ -52,6 +52,10 @@ void DFSClient::ProcessCommand(const std::string &command, const std::string &fi
 
         client_node.Stat(filename);
 
+    } else if (command == "lock") {
+
+        client_node.Lock(filename);
+
     } else {
 
         dfs_log(LL_ERROR) << "Unknown command";
@@ -335,7 +339,7 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    std::string commands("fetch store delete list stat mount sync");
+    std::string commands("fetch store delete list stat lock mount sync");
     if (commands.find(command) == std::string::npos ) {
         std::cerr << "\nUnknown command!\n";
         Usage();
