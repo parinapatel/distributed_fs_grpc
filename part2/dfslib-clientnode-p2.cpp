@@ -534,7 +534,8 @@ void DFSClientNodeP2::HandleCallbackList() {
                         }
                         local_storage.erase(remote_file_path);
                     } else {
-                        this->Fetch(remote_file_path);
+                        if(mounted) this->Delete(remote_file_path);
+                        else this->Fetch(remote_file_path);
                     }
                 }
 
