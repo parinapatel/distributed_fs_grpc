@@ -171,8 +171,10 @@ elif [[ $i == "delete" ]] then
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && ls -la
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${TXT_FILE_NAME} && ls -la
 else
-    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && diff -s mnt/server/${BIN_FILE_NAME} /mnt/client/${BIN_FILE_NAME}
-    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && diff -s mnt/server/${TXT_FILE_NAME} /mnt/client/${TXT_FILE_NAME}
+    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && \
+        diff -s mnt/server/${BIN_FILE_NAME} /mnt/client/${BIN_FILE_NAME}
+    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && \
+        diff -s mnt/server/${TXT_FILE_NAME} /mnt/client/${TXT_FILE_NAME}
 fi
 done
 ```
@@ -309,8 +311,10 @@ elif [[ $i == "delete" ]] then
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && ls -la
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${TXT_FILE_NAME} && ls -la
 else
-    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && diff -s mnt/server/${BIN_FILE_NAME} /mnt/client/${BIN_FILE_NAME}
-    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && diff -s mnt/server/${TXT_FILE_NAME} /mnt/client/${TXT_FILE_NAME}
+    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && \
+        diff -s mnt/server/${BIN_FILE_NAME} /mnt/client/${BIN_FILE_NAME}
+    bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && \
+        diff -s mnt/server/${TXT_FILE_NAME} /mnt/client/${TXT_FILE_NAME}
 fi
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} &
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME}  || echo "FILE IS LOCKED!!!!"
@@ -350,9 +354,11 @@ If total byte % BUFFER SIZE != 0 then it wasnt flushing last chunk , thus result
     bool check_for_file_lock(const std::string &file_path, const std::string &client_id) {
         if (lock_file_map.count(file_path) == 0) {
         return UNLOCKED;
-        } else if (lock_file_map[file_path].client_id == client_id && lock_file_map[file_path].client_id <  time(NULL) - 300  ) {
-        return UNLOCKED;
-    } else return LOCKED;
+        } else if (lock_file_map[file_path].client_id == client_id && lock_file_map[file_path].client_id < 
+                   time(NULL) - 300  ) {
+                      return UNLOCKED;
+                      } 
+        else return LOCKED;
     }
     ```
   
