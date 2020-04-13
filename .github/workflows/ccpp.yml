@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Setup Base Enviorment
-      run:  sudo bash -c 'wget -O -  https://ppa.bitanical.com/pward8@gatech.edu.gpg.key && apt-key add -  && echo "deb https://ppa.bitanical.com/apt/debian bionic main" >> /etc/apt/sources.list.d/ppa.bitanical.list'
+      run:  sudo bash -c 'wget -O gpg_file  https://ppa.bitanical.com/pward8@gatech.edu.gpg.key && apt-key add gpg_file  && echo "deb https://ppa.bitanical.com/apt/debian bionic main" >> /etc/apt/sources.list.d/ppa.bitanical.list'
     - name: install Dependecies
       shell: bash
       run: sudo apt-get update && sudo apt-get install -y libgmp-dev gcc-multilib valgrind portmap rpcbind  libcurl4-openssl-dev bzip2 imagemagick libmagickcore-dev libssl-dev llvm net-tools libtool pkg-config grpc-cs6200 protobuf-cs6200
