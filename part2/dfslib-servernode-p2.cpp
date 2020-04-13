@@ -113,7 +113,16 @@ private:
     }
 
     bool check_for_file_lock(const std::string &file_path, const std::string &client_id) {
-        return lock_file_map.count(file_path) != 0;
+
+        dfs_log(LL_DEBUG) << "OUTSIDE Condition check with 0 != " << lock_file_map.count(file_path);
+        if (lock_file_map.count(file_path) == 0) {
+            dfs_log(LL_DEBUG) << "INSIDE Condition check with 0 != " << lock_file_map.count(file_path);
+            return UNLOCKED;
+        } else if (lock_file_map[file_path] == client_id) {
+            dfs_log(LL_DEBUG) << "FILE PATH SAME" << lock_file_map[file_path];
+            return UNLOCKED;
+        } else return LOCKED;
+
 
     }
 
@@ -145,7 +154,7 @@ private:
     bool unlock_file_lock(const std::string &file_path) {
         std::lock_guard<std::mutex> lock(lock_mutex);
 
-        dfs_log(LL_DEBUG) << "Unlocking  File :  " << file_path;
+        dfs_log(LL_SYSINFO) << "Unlocking  File :  " << file_path;
 
         if (lock_file_map.count(file_path) == 0) {
             return UNLOCKED;
@@ -300,9 +309,9 @@ public:
 
         if (!check_for_file_lock(file_name, file_content.client_id())) {
             dfs_log(LL_DEBUG) << "Locking File " << file_name << "\t" << file_content.client_id();
-            if (acquire_file_lock(file_name, file_content.client_id()) != LOCKED) {
+            if (acquire_file_lock(file_name, file_content.client_id()) == LOCKED) {
                 response->set_file_lock(LOCKED);
-            }
+            } else unlock_file_lock(file_name);
         } else {
             response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
             dfs_log(LL_DEBUG) << "Given file ; " + file_content.file_name() + " is locked by client : "
@@ -322,7 +331,7 @@ public:
         }
         dfs_log(LL_DEBUG) << "Printing in Store File Function ";
         dfs_log(LL_DEBUG) << "Done Printing in Store File Function and going in sleep ";
-
+//        sleep(20);
         if (write_to_file(file_name, reader) == -1) {
             dfs_log(LL_ERROR) << "Write To file Failed.";
 
@@ -480,18 +489,28 @@ public:
             return ::grpc::Status(::grpc::StatusCode::DEADLINE_EXCEEDED,
                                   "Context is cancelled or Deadline Exceeded or Timeout");
         }
+
+
         std::string file_path = WrapPath(request->file_name());
 
+        dfs_log(LL_DEBUG) << check_for_file_lock(file_path, request->client_id()) << "  UNLCOKED == " << UNLOCKED;
+
+
         if (check_for_file_lock(file_path, request->client_id()) == UNLOCKED) {
-            if (acquire_file_lock(file_path, request->client_id()) != LOCKED) {
-//                response->set_file_lock(LOCKED);
-                response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
-                dfs_log(LL_DEBUG) << "Given file ; " + request->file_name() + " is locked by client : "
-                                  << find_lock_client(file_path);
-                return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
-                                      "Given file ; " + request->file_name() + " is locked by another client.");
-            }
+
+            dfs_log(LL_DEBUG) << "Locking File " << file_path << "\t" << request->client_id();
+            if (acquire_file_lock(file_path, request->client_id()) == LOCKED) {
+                response->set_file_lock(LOCKED);
+            } else unlock_file_lock(file_path);
+        } else {
+            response->set_file_transfer_status(FILE_SERVER_EXAUSTED);
+            dfs_log(LL_DEBUG) << "Given file ; " + request->client_id() + " is locked by client : "
+                              << find_lock_client(file_path);
+            return ::grpc::Status(::grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                  "Given file ; " + request->client_id() + " is locked by another client.");
         }
+
+
         response->set_file_name(request->file_name());
         response->set_file_lock(LOCKED);
         response->set_client_id(request->client_id());
