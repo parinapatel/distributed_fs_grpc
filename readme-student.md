@@ -105,7 +105,7 @@ We are using `stream` GRPC whenever we need to transfer file data or any large d
    
 ## Message and Method Structure:
 GRPC Protos:
-```protobuf
+```proto
 service DFSService {
     //  A method to store files on the server
         rpc store_file(stream  file_stream) returns (file_response);
@@ -302,12 +302,14 @@ TXT_FILE_NAME='parin.txt'
 BIN_FILE_NAME='gt-klaus_LARGE.jpg'
 
 for i in "list" "store" "fetch" "stat" "delete" ; do
-if [[ $i == "list" ]] then 
+if [[ $i == "list" ]] ; then 
     bin/dfs-client-p1 -d 3 -m /mnt/client list
-elif [[ $i == "stat" ]] then
+elif [[ $i == "stat" ]] 
+then
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} 
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${TXT_FILE_NAME}
-elif [[ $i == "delete" ]] then
+elif [[ $i == "delete" ]]  ;
+then
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${BIN_FILE_NAME} && ls -la
     bin/dfs-client-p1 -d 3 -m /mnt/client $i ${TXT_FILE_NAME} && ls -la
 else
